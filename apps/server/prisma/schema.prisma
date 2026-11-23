@@ -1,0 +1,141 @@
+// ClassPluse data model.
+// Note: Session.code is unique only among non-ENDED sessions. Prisma can't express a
+// partial unique index, so it lives in raw SQL in the init migration
+// ("Session_code_active_key"). A plain index on code keeps lookups fast.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum SlideType {
+  POLL
+  QUIZ
+}
+
+enum SessionStatus {
+  WAITING
+  LIVE
+  ENDED
+}
+
+enum PulseValue {
+  FOLLOWING
+  LOST
+}
+
+model Lecturer {
+  id            String         @id @default(cuid())
+  name          String
+  email         String         @unique
+  passwordHash  String
+  avatarUrl     String?
+  createdAt     DateTime       @default(now())
+  presentations Presentation[]
+}
+
+model Presentation {
+  id         String    @id @default(cuid())
+  lecturerId String
+  title      String
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  lecturer   Lecturer  @relation(fields: [lecturerId], references: [id], onDelete: Cascade)
+  slides     Slide[]
+  sessions   Session[]
+
+  @@index([lecturerId])
+}
+
+model Slide {
+  id             String       @id @default(cuid())
+  presentationId String
+  order          Int
+  type           SlideType
+  question       String
+  imageUrl       String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  presentation   Presentation @relation(fields: [presentationId], references: [id], onDelete: Cascade)
+  options        Option[]
+  responses      Response[]
+  currentIn      Session[]    @relation("SessionCurrentSlide")
+
+  @@index([presentationId, order])
+}
+
+model Option {
+  id        String     @id @default(cuid())
+  slideId   String
+  order     Int
+  label     String
+  isCorrect Boolean    @default(false)
+  slide     Slide      @relation(fields: [slideId], references: [id], onDelete: Cascade)
+  responses Response[]
+
+  @@index([slideId, order])
+}
+
+model Session {
+  id                    String        @id @default(cuid())
+  presentationId        String
+  code                  String        @db.Char(6)
+  status                SessionStatus @default(WAITING)
+  currentSlideId        String?
+  showResultsToStudents Boolean       @default(false)
+  startedAt             DateTime      @default(now())
+  endedAt               DateTime?
+  presentation          Presentation  @relation(fields: [presentationId], references: [id], onDelete: Cascade)
+  currentSlide          Slide?        @relation("SessionCurrentSlide", fields: [currentSlideId], references: [id], onDelete: SetNull)
+  participants          Participant[]
+  responses             Response[]
+  pulseStates           PulseState[]
+
+  @@index([code])
+  @@index([presentationId])
+}
+
+/// Anonymous student. Holds no personal data; anonToken is random and scoped to one session.
+model Participant {
+  id         String      @id @default(cuid())
+  sessionId  String
+  anonToken  String      @unique
+  joinedAt   DateTime    @default(now())
+  session    Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  responses  Response[]
+  pulseState PulseState?
+
+  @@index([sessionId])
+}
+
+model Response {
+  id            String      @id @default(cuid())
+  sessionId     String
+  slideId       String
+  participantId String
+  optionId      String
+  updatedAt     DateTime    @updatedAt
+  session       Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  slide         Slide       @relation(fields: [slideId], references: [id], onDelete: Cascade)
+  participant   Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  option        Option      @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  @@unique([participantId, slideId])
+  @@index([sessionId, slideId])
+}
+
+model PulseState {
+  participantId String      @id
+  sessionId     String
+  state         PulseValue
+  updatedAt     DateTime    @updatedAt
+  participant   Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  session       Session     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+}
